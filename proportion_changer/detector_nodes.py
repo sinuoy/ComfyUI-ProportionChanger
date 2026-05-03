@@ -29,6 +29,7 @@ class ProportionChangerDWPoseDetector:
         return {"required": {
                 "image": ("IMAGE", {"tooltip": "Input image for pose detection"}),
                 "score_threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "Score threshold for pose detection"}),
+                "person_indices": ("STRING", {"default": "0", "tooltip": "Comma-separated indices of people to extract (0-based). Use 'all' for everyone. E.g. '0', '0,1', 'all'"}),
             }
         }
 
@@ -37,7 +38,20 @@ class ProportionChangerDWPoseDetector:
     FUNCTION = "detect_pose"
     CATEGORY = "ProportionChanger"
 
-    def detect_pose(self, image, score_threshold):
+    def _parse_person_indices(self, person_indices_str, num_detected):
+        s = person_indices_str.strip().lower()
+        if s == "all":
+            return list(range(num_detected))
+        indices = []
+        for part in s.split(","):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part)
+                if 0 <= idx < num_detected:
+                    indices.append(idx)
+        return indices if indices else ([0] if num_detected > 0 else [])
+
+    def detect_pose(self, image, score_threshold, person_indices="0"):
         device = mm.get_torch_device()
         
         # Model loading
@@ -82,21 +96,28 @@ class ProportionChangerDWPoseDetector:
         
         for i, img in enumerate(image_np):
             try:
-                # Use the high-level DWPose detector call (same as working UniAnimate version)
-                pose = self.dwpose_detector(img, score_threshold=score_threshold)
-                
-                # Convert to POSE_KEYPOINT format using actual canvas dimensions
-                pose_keypoint_frame = dwpose_format_to_pose_keypoint(
-                    pose['bodies']['candidate'], 
-                    pose['faces'], 
-                    pose['hands'], 
-                    width,  # Use actual canvas width for pixel coordinates
-                    height  # Use actual canvas height for pixel coordinates
-                )
-                
-                # Add canvas size info for compatibility
-                pose_keypoint_frame["canvas_width"] = width
-                pose_keypoint_frame["canvas_height"] = height
+                all_poses = self.dwpose_detector.detect_persons(img, score_threshold=score_threshold)
+                selected = self._parse_person_indices(person_indices, len(all_poses))
+
+                people = []
+                for idx in selected:
+                    pose = all_poses[idx]
+                    kp = dwpose_format_to_pose_keypoint(
+                        pose['bodies']['candidate'],
+                        pose['faces'],
+                        pose['hands'],
+                        width,
+                        height
+                    )
+                    if kp and kp.get('people'):
+                        people.extend(kp['people'])
+
+                pose_keypoint_frame = {
+                    "version": "1.0",
+                    "people": people,
+                    "canvas_width": width,
+                    "canvas_height": height
+                }
                 pose_keypoints.append(pose_keypoint_frame)
                 
             except (RuntimeError, ValueError, OSError) as e:

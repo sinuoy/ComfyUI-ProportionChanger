@@ -39,7 +39,6 @@ class ProportionChangerReference:
         """
         
         if not pose_keypoint or len(pose_keypoint) == 0:
-            # Return empty keypoint data
             empty_person = {
                 "pose_keypoints_2d": [0.0] * 75,
                 "face_keypoints_2d": [0.0] * 210,
@@ -47,6 +46,9 @@ class ProportionChangerReference:
                 "hand_right_keypoints_2d": [0.0] * 63
             }
             return ([{"people": [empty_person], "canvas_width": 512, "canvas_height": 768}],)
+
+        if reference_pose_keypoint is None:
+            return (pose_keypoint,)
         
         # Get canvas dimensions from first frame
         frame_data = pose_keypoint[0]

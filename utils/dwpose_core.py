@@ -63,75 +63,87 @@ class DWposeDetector:
     def __init__(self, model_det, model_pose):
         self.pose_estimation = Wholebody(model_det, model_pose)
 
+    def _process_single_person(self, candidate, subset, score_threshold):
+        """Process a (1, num_keypoints, 3) candidate slice into a pose dict."""
+        candidate = candidate.copy()
+        subset = subset.copy()
+        nums, keys, locs = candidate.shape
+
+        score = subset[:, :18].copy()
+        for i in range(len(score)):
+            for j in range(len(score[i])):
+                if score[i][j] > score_threshold:
+                    score[i][j] = int(18 * i + j)
+                else:
+                    score[i][j] = -1
+
+        un_visible = subset < score_threshold
+        candidate[un_visible] = -1
+
+        bodyfoot_score = subset[:, :24].copy()
+        for i in range(len(bodyfoot_score)):
+            for j in range(len(bodyfoot_score[i])):
+                if bodyfoot_score[i][j] > score_threshold:
+                    bodyfoot_score[i][j] = int(18 * i + j)
+                else:
+                    bodyfoot_score[i][j] = -1
+        if -1 not in bodyfoot_score[:, 18] and -1 not in bodyfoot_score[:, 19]:
+            bodyfoot_score[:, 18] = np.array([18.])
+        else:
+            bodyfoot_score[:, 18] = np.array([-1.])
+        if -1 not in bodyfoot_score[:, 21] and -1 not in bodyfoot_score[:, 22]:
+            bodyfoot_score[:, 19] = np.array([19.])
+        else:
+            bodyfoot_score[:, 19] = np.array([-1.])
+        bodyfoot_score = bodyfoot_score[:, :20]
+
+        bodyfoot = candidate[:, :24].copy()
+        for i in range(nums):
+            if -1 not in bodyfoot[i][18] and -1 not in bodyfoot[i][19]:
+                bodyfoot[i][18] = (bodyfoot[i][18] + bodyfoot[i][19]) / 2
+            else:
+                bodyfoot[i][18] = np.array([-1., -1.])
+            if -1 not in bodyfoot[i][21] and -1 not in bodyfoot[i][22]:
+                bodyfoot[i][19] = (bodyfoot[i][21] + bodyfoot[i][22]) / 2
+            else:
+                bodyfoot[i][19] = np.array([-1., -1.])
+
+        bodyfoot = bodyfoot[:, :20, :]
+        bodyfoot = bodyfoot.reshape(nums * 20, locs)
+
+        faces = candidate[:, 24:92]
+        hands = candidate[:, 92:113]
+        hands = np.vstack([hands, candidate[:, 113:]])
+
+        bodies = dict(candidate=bodyfoot, subset=bodyfoot_score)
+        return dict(bodies=bodies, hands=hands, faces=faces)
+
+    def detect_persons(self, oriImg, score_threshold=0.3):
+        """Detect all persons and return a list of per-person pose dicts."""
+        oriImg = oriImg.copy()
+        H, W, C = oriImg.shape
+        with torch.no_grad():
+            candidate, subset = self.pose_estimation(oriImg)
+            if candidate.shape[0] == 0:
+                return []
+            candidate = candidate.copy().astype(float)
+            candidate[..., 0] /= float(W)
+            candidate[..., 1] /= float(H)
+            return [
+                self._process_single_person(candidate[i:i+1], subset[i:i+1], score_threshold)
+                for i in range(candidate.shape[0])
+            ]
+
     def __call__(self, oriImg, score_threshold=0.3):
         oriImg = oriImg.copy()
         H, W, C = oriImg.shape
         with torch.no_grad():
             candidate, subset = self.pose_estimation(oriImg)
-            candidate = candidate[0][np.newaxis, :, :]
-            subset = subset[0][np.newaxis, :]
-            nums, keys, locs = candidate.shape
+            candidate = candidate[0:1].copy().astype(float)
+            subset = subset[0:1].copy()
             candidate[..., 0] /= float(W)
             candidate[..., 1] /= float(H)
-            body = candidate[:,:18].copy()
-            body = body.reshape(nums*18, locs)
-            score = subset[:,:18].copy()
-            
-            for i in range(len(score)):
-                for j in range(len(score[i])):
-                    if score[i][j] > score_threshold:
-                        score[i][j] = int(18*i+j)
-                    else:
-                        score[i][j] = -1
-
-            un_visible = subset<score_threshold
-            candidate[un_visible] = -1
-
-            bodyfoot_score = subset[:,:24].copy()
-            for i in range(len(bodyfoot_score)):
-                for j in range(len(bodyfoot_score[i])):
-                    if bodyfoot_score[i][j] > score_threshold:
-                        bodyfoot_score[i][j] = int(18*i+j)
-                    else:
-                        bodyfoot_score[i][j] = -1
-            if -1 not in bodyfoot_score[:,18] and -1 not in bodyfoot_score[:,19]:
-                bodyfoot_score[:,18] = np.array([18.]) 
-            else:
-                bodyfoot_score[:,18] = np.array([-1.])
-            if -1 not in bodyfoot_score[:,21] and -1 not in bodyfoot_score[:,22]:
-                bodyfoot_score[:,19] = np.array([19.]) 
-            else:
-                bodyfoot_score[:,19] = np.array([-1.])
-            bodyfoot_score = bodyfoot_score[:, :20]
-
-            bodyfoot = candidate[:,:24].copy()
-            
-            for i in range(nums):
-                if -1 not in bodyfoot[i][18] and -1 not in bodyfoot[i][19]:
-                    bodyfoot[i][18] = (bodyfoot[i][18]+bodyfoot[i][19])/2
-                else:
-                    bodyfoot[i][18] = np.array([-1., -1.])
-                if -1 not in bodyfoot[i][21] and -1 not in bodyfoot[i][22]:
-                    bodyfoot[i][19] = (bodyfoot[i][21]+bodyfoot[i][22])/2
-                else:
-                    bodyfoot[i][19] = np.array([-1., -1.])
-            
-            bodyfoot = bodyfoot[:,:20,:]
-            bodyfoot = bodyfoot.reshape(nums*20, locs)
-
-            foot = candidate[:,18:24]
-
-            faces = candidate[:,24:92]
-
-            hands = candidate[:,92:113]
-            hands = np.vstack([hands, candidate[:,113:]])
-            
-            # bodies = dict(candidate=body, subset=score)
-            bodies = dict(candidate=bodyfoot, subset=bodyfoot_score)
-            pose = dict(bodies=bodies, hands=hands, faces=faces)
-
-            # return draw_pose(pose, H, W)
-            return pose
+            return self._process_single_person(candidate, subset, score_threshold)
 
 
 def draw_pose(pose, H, W, stick_width=4,draw_body=True, draw_hands=True, draw_feet=True, 
