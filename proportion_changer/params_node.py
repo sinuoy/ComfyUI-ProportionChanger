@@ -746,17 +746,33 @@ class ProportionChangerParams:
         
         return adjusted
     
-    def _apply_global_transform(self, person, canvas_width, canvas_height, 
+    def _apply_global_transform(self, person, canvas_width, canvas_height,
                                overall_scale, rotate_angle, translate_x, translate_y):
         """
         全体変換（回転・移動）を適用
         """
         if overall_scale == 1.0 and rotate_angle == 0.0 and translate_x == 0.0 and translate_y == 0.0:
             return  # 変換不要
-        
+
+        # Use ankle midpoint as pivot so feet stay fixed and scaling goes upward.
+        # Fall back to canvas center if ankles are not detected.
         center_x = canvas_width / 2
         center_y = canvas_height / 2
-        
+        body_kps = person.get("pose_keypoints_2d", [])
+        l_ankle_idx = 10  # LAnkle
+        r_ankle_idx = 13  # RAnkle
+        l_ankle_conf = body_kps[l_ankle_idx * 3 + 2] if len(body_kps) > l_ankle_idx * 3 + 2 else 0
+        r_ankle_conf = body_kps[r_ankle_idx * 3 + 2] if len(body_kps) > r_ankle_idx * 3 + 2 else 0
+        if l_ankle_conf > 0 and r_ankle_conf > 0:
+            center_x = (body_kps[l_ankle_idx * 3] + body_kps[r_ankle_idx * 3]) / 2
+            center_y = (body_kps[l_ankle_idx * 3 + 1] + body_kps[r_ankle_idx * 3 + 1]) / 2
+        elif l_ankle_conf > 0:
+            center_x = body_kps[l_ankle_idx * 3]
+            center_y = body_kps[l_ankle_idx * 3 + 1]
+        elif r_ankle_conf > 0:
+            center_x = body_kps[r_ankle_idx * 3]
+            center_y = body_kps[r_ankle_idx * 3 + 1]
+
         # 回転角度をラジアンに変換
         angle_rad = math.radians(rotate_angle)
         cos_a = math.cos(angle_rad)
